@@ -2,7 +2,6 @@ import os
 import random
 import json
 import asyncio
-from datetime import datetime
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -10,16 +9,8 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, filters
 )
 
-# ══════════════════════════════════════════════
-#  КОНФИГУРАЦИЯ
-# ══════════════════════════════════════════════
-
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-
-# ══════════════════════════════════════════════
-#  72 КЛЕТКИ ЛИЛЫ
-# ══════════════════════════════════════════════
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 CELLS = {
     1:  {"name": "Рождение", "desc": "Начало пути. Момент появления в мире — чистый, без суждений. Всё возможно."},
@@ -68,7 +59,7 @@ CELLS = {
     44: {"name": "Потакание себе", "desc": "Избегание дискомфорта любой ценой. Комфорт как ловушка."},
     45: {"name": "Неуместность", "desc": "Ощущение, что не на своём месте. Приглашение найти своё."},
     46: {"name": "Правило", "desc": "Структура, которая помогает или ограничивает — зависит от осознанности."},
-    47: {"name": "Высшая сила", "desc": "Соприкосновение с тем, что больше личного «я». Смирение как сила."},
+    47: {"name": "Высшая сила", "desc": "Соприкосновение с тем, что больше личного я. Смирение как сила."},
     48: {"name": "Совесть", "desc": "Внутренний голос, который знает правду. Слышать его — уже смелость."},
     49: {"name": "Непостоянство", "desc": "Всё меняется. Цепляться — значит страдать. Отпускать — значит течь."},
     50: {"name": "Самовластие", "desc": "Ответственность за свою жизнь. Никто другой не сделает это за тебя."},
@@ -79,13 +70,13 @@ CELLS = {
     55: {"name": "Земной план", "desc": "Повседневная реальность. Тело, деньги, отношения, работа."},
     56: {"name": "Зависть духа", "desc": "Желание чужого пути. Забывание о своём уникальном маршруте."},
     57: {"name": "Милость", "desc": "Получать не то, что заработал, а то, что нужно. Принять это."},
-    58: {"name": "Единство", "desc": "Ощущение связи со всем. Граница между «я» и «мир» становится прозрачной."},
+    58: {"name": "Единство", "desc": "Ощущение связи со всем. Граница между я и мир становится прозрачной."},
     59: {"name": "Откровение", "desc": "Внезапное понимание. Пазл складывается. Что-то проясняется навсегда."},
     60: {"name": "Духовный план", "desc": "Измерение смысла. Вопрос: зачем всё это?"},
     61: {"name": "Блаженство", "desc": "Полнота без причины. Счастье, которое не зависит от обстоятельств."},
     62: {"name": "Высшее знание", "desc": "Понимание, которое невозможно объяснить словами — только прожить."},
     63: {"name": "Карма", "desc": "Причинно-следственная связь. То, что посеяно — прорастает."},
-    64: {"name": "Трансцендентность", "desc": "Выход за пределы привычного «я». Кратковременная свобода от роли."},
+    64: {"name": "Трансцендентность", "desc": "Выход за пределы привычного я. Кратковременная свобода от роли."},
     65: {"name": "Преданность", "desc": "Верность пути даже когда непонятно зачем. Доверие процессу."},
     66: {"name": "Космическое сознание", "desc": "Всё есть одно. Разделение — иллюзия. Редкое состояние единства."},
     67: {"name": "Абсолют", "desc": "За пределами всех пар противоположностей. Тишина за шумом."},
@@ -96,175 +87,93 @@ CELLS = {
     72: {"name": "Чистое бытие", "desc": "Существование до мысли. Просто быть — без добавлений."},
 }
 
-# Змеи: с какой клетки → на какую опускают
-SNAKES = {
-    17: 7, 54: 19, 62: 42, 64: 2, 92: 51  # классическая Лила
-}
-# Только те змеи, чьи клетки есть в нашем поле 1-72
-SNAKES = {k: v for k, v in SNAKES.items() if k <= 72 and v <= 72}
-SNAKES.update({17: 7, 54: 19, 62: 42})
+SNAKES = {17: 7, 54: 19, 62: 42}
+ARROWS = {6: 28, 14: 47, 22: 60, 36: 55, 52: 69}
 
-# Стрелы: с какой клетки → на какую поднимают
-ARROWS = {
-    6: 28, 14: 47, 22: 60, 36: 55, 52: 72
-}
-ARROWS = {k: v for k, v in ARROWS.items() if k <= 72 and v <= 72}
-
-# ══════════════════════════════════════════════
-#  ХРАНИЛИЩЕ (в памяти, для простоты)
-# ══════════════════════════════════════════════
-
-# sessions[user_id] = {
-#   "state": str,
-#   "query": str,
-#   "readiness": float,
-#   "cell": int,
-#   "path": [int],
-#   "insights": [str],
-#   "events": [str],
-#   "roll_count": int,
-# }
 sessions = {}
 
 def get_session(user_id):
     if user_id not in sessions:
         sessions[user_id] = {
-            "state": "idle",
-            "query": "",
-            "readiness": 0.5,
-            "cell": 0,
-            "path": [],
-            "insights": [],
-            "events": [],
-            "roll_count": 0,
+            "state": "idle", "query": "", "readiness": 0.5,
+            "cell": 0, "path": [], "insights": [], "events": [],
         }
     return sessions[user_id]
 
-# ══════════════════════════════════════════════
-#  CLAUDE API
-# ══════════════════════════════════════════════
-
-async def call_claude(prompt: str, system: str = "") -> str:
-    if not ANTHROPIC_API_KEY:
-        return "[Ключ API не настроен]"
+async def call_groq(prompt: str, system: str = "", max_tokens: int = 400) -> str:
+    if not GROQ_API_KEY:
+        return "Ключ GROQ_API_KEY не добавлен в переменные Railway."
+    sys = system or "Ты мудрый проводник трансформационной игры Лила. Отвечай по-русски. Тон тихий, внимательный, без пафоса."
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 600,
-                "system": system or "Ты мудрый проводник трансформационной игры Лила. Отвечай по-русски, тихо и внимательно. Без пафоса.",
-                "messages": [{"role": "user", "content": prompt}],
-            }
-        )
-        data = resp.json()
-        return data["content"][0]["text"]
+        try:
+            r = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "max_tokens": max_tokens,
+                    "messages": [
+                        {"role": "system", "content": sys},
+                        {"role": "user", "content": prompt},
+                    ],
+                }
+            )
+            return r.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            return f"Ошибка: {e}"
 
 async def analyze_query(query: str) -> float:
-    """Скрытый анализ запроса. Возвращает коэффициент готовности 0.0–1.0"""
-    prompt = f"""Оцени запрос игрока по 5 критериям от 0 до 1:
-1. specificity — конкретность вопроса
-2. depth — есть ли внутренний слой за симптомом
-3. emotionality — эмоциональная вовлечённость
-4. responsibility — игрок видит себя частью ситуации
-5. awareness — осознание, что ответ внутри
-
+    prompt = f"""Оцени запрос по 5 критериям от 0 до 1:
+specificity, depth, emotionality, responsibility, awareness.
 Запрос: «{query}»
-
-Верни ТОЛЬКО JSON без пояснений:
-{{"specificity":0.5,"depth":0.5,"emotionality":0.5,"responsibility":0.5,"awareness":0.5}}"""
-
+Ответь ТОЛЬКО JSON: {{"specificity":0.5,"depth":0.5,"emotionality":0.5,"responsibility":0.5,"awareness":0.5}}"""
     try:
-        result = await call_claude(prompt, "Отвечай только JSON, без лишних слов.")
-        # Извлекаем JSON из ответа
-        start = result.find("{")
-        end = result.rfind("}") + 1
-        scores = json.loads(result[start:end])
-        weights = {"specificity": 0.15, "depth": 0.25,
-                   "emotionality": 0.20, "responsibility": 0.25, "awareness": 0.15}
-        return min(1.0, max(0.0, sum(scores.get(k, 0.5) * w for k, w in weights.items())))
-    except Exception:
+        result = await call_groq(prompt, "Отвечай только валидным JSON.", 80)
+        scores = json.loads(result[result.find("{"):result.rfind("}")+1])
+        w = {"specificity":0.15,"depth":0.25,"emotionality":0.20,"responsibility":0.25,"awareness":0.15}
+        return min(1.0, max(0.0, sum(scores.get(k,0.5)*v for k,v in w.items())))
+    except:
         return 0.5
 
 async def reflect_query(query: str) -> str:
-    prompt = f"""Игрок написал запрос для входа в трансформационную игру Лила:
-«{query}»
-
-Напиши одно тёплое предложение — отрази суть запроса, не оценивая.
-Начни с «Я слышу» или «Похоже» или «Кажется».
-Максимум 2 предложения. Никаких советов."""
-    return await call_claude(prompt)
+    return await call_groq(
+        f"Игрок вошёл в игру Лила с запросом: «{query}»\n"
+        "Напиши 1-2 тёплых предложения — отрази суть, не оценивая. "
+        "Начни с «Я слышу» или «Похоже». Без советов.", max_tokens=100)
 
 async def generate_cell_text(cell_number: int, query: str) -> str:
-    cell = CELLS.get(cell_number, {"name": "Неизвестная клетка", "desc": ""})
-    prompt = f"""Ты проводник в игре Лила. Игрок попал на клетку.
-
-Клетка {cell_number} — «{cell["name"]}»
-Суть клетки: {cell["desc"]}
-Запрос игрока: «{query}»
-
-Напиши текст из 3 частей (без заголовков, единым потоком):
-1. Смысл клетки — 2 предложения, суть состояния
-2. Связь с запросом — 1 предложение как это касается их вопроса
-3. Вопрос — один открытый вопрос для размышления
-
-Тон: тихий, внимательный. Не используй слово «путь». Максимум 120 слов."""
-    return await call_claude(prompt)
+    cell = CELLS.get(cell_number, {"name":"?","desc":""})
+    return await call_groq(
+        f"Клетка {cell_number} — «{cell['name']}»\nСуть: {cell['desc']}\nЗапрос: «{query}»\n\n"
+        "Напиши единым потоком без заголовков:\n"
+        "1. Смысл клетки — 2 предложения\n"
+        "2. Связь с запросом — 1 предложение\n"
+        "3. Один открытый вопрос\n"
+        "Тон тихий. Не используй слово «путь». До 100 слов.", max_tokens=300)
 
 async def explain_simpler(cell_number: int, query: str) -> str:
-    cell = CELLS.get(cell_number, {"name": "?", "desc": ""})
-    prompt = f"""Объясни клетку {cell_number} «{cell["name"]}» простыми словами.
-Контекст запроса игрока: «{query}»
-Начни с «Если совсем просто...»
-Максимум 60 слов. Один конкретный пример из обычной жизни."""
-    return await call_claude(prompt)
+    cell = CELLS.get(cell_number, {"name":"?","desc":""})
+    return await call_groq(
+        f"Объясни клетку «{cell['name']}» просто. Контекст: «{query}»\n"
+        "Начни с «Если совсем просто...». Один пример из жизни. До 60 слов.", max_tokens=150)
 
-async def generate_help_response(cell_number: int, query: str, chosen_theme: str) -> str:
-    cell = CELLS.get(cell_number, {"name": "?", "desc": ""})
-    prompt = f"""Игрок не понял клетку {cell_number} «{cell["name"]}».
-Он сказал, что тема «{chosen_theme}» ближе к его состоянию.
-Запрос: «{query}»
-
-Объясни клетку через эту тему применительно к их запросу.
-Максимум 80 слов. Без абстракций — только конкретно про их ситуацию."""
-    return await call_claude(prompt)
+async def generate_help_response(cell_number: int, query: str, theme: str) -> str:
+    cell = CELLS.get(cell_number, {"name":"?","desc":""})
+    return await call_groq(
+        f"Игрок не понял клетку «{cell['name']}». Тема «{theme}» ближе.\n"
+        f"Запрос: «{query}»\nОбъясни через эту тему конкретно. До 80 слов.", max_tokens=200)
 
 async def generate_final_summary(query: str, path: list, insights: list) -> str:
-    path_str = " → ".join(str(c) for c in path)
-    insights_str = "\n".join(f"- {i}" for i in insights) if insights else "Мыслей не записано"
-    prompt = f"""Игрок завершил трансформационную игру Лила.
-
-Начальный запрос: «{query}»
-Путь по клеткам: {path_str}
-Записанные мысли:
-{insights_str}
-
-Напиши итоговое послание:
-1. Что прожил игрок на этом пути — 2 предложения
-2. Что могло стать яснее — 1 предложение
-3. Вопрос для следующего шага — 1 вопрос
-
-Тон: тёплый, без пафоса. Максимум 100 слов."""
-    return await call_claude(prompt)
-
-# ══════════════════════════════════════════════
-#  КУБИК
-# ══════════════════════════════════════════════
+    ins = "\n".join(f"- {i}" for i in insights) if insights else "Мыслей не записано"
+    return await call_groq(
+        f"Игрок завершил игру Лила.\nЗапрос: «{query}»\n"
+        f"Путь: {' → '.join(str(c) for c in path)}\nМысли:\n{ins}\n\n"
+        "Напиши послание: что прожил (2 пред.), что стало яснее (1 пред.), вопрос для следующего шага. До 100 слов.", max_tokens=300)
 
 def weighted_roll(readiness: float) -> int:
-    """Шестёрка выпадает с вероятностью 17%–50% в зависимости от готовности"""
-    p6 = 0.167 + readiness * 0.333
-    if random.random() < p6:
+    if random.random() < 0.167 + readiness * 0.333:
         return 6
     return random.randint(1, 5)
-
-def game_roll() -> int:
-    return random.randint(1, 6)
 
 ADMISSION_COMMENTS = {
     1: "Ваш запрос услышан. Но игра предлагает посмотреть совсем в другую сторону. Возможно, настоящий вопрос пока скрыт.",
@@ -274,66 +183,28 @@ ADMISSION_COMMENTS = {
     5: "Вы очень близко. Одно последнее уточнение.",
 }
 
-# ══════════════════════════════════════════════
-#  КЛАВИАТУРЫ
-# ══════════════════════════════════════════════
-
-def kb_roll_admission():
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🎲 Бросить кубик", callback_data="admission_roll")
-    ]])
-
-def kb_cell():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Продолжить путь", callback_data="continue")],
-        [
-            InlineKeyboardButton("💬 Объяснить проще", callback_data="simpler"),
-            InlineKeyboardButton("✏️ Записать мысль", callback_data="insight"),
-        ],
-        [InlineKeyboardButton("❓ Не понимаю", callback_data="help")],
-    ])
-
-def kb_roll_game():
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🎲 Бросить кубик", callback_data="game_roll")
-    ]])
-
-def kb_help_themes():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("😨 Страх", callback_data="help_страх"),
-            InlineKeyboardButton("🔀 Выбор", callback_data="help_выбор"),
-        ],
-        [
-            InlineKeyboardButton("💞 Отношения", callback_data="help_отношения"),
-            InlineKeyboardButton("🤔 Неуверенность", callback_data="help_неуверенность"),
-        ],
-        [InlineKeyboardButton("✨ Что-то другое", callback_data="help_другое")],
-    ])
-
-# ══════════════════════════════════════════════
-#  HANDLERS
-# ══════════════════════════════════════════════
+def kb_admission(): return InlineKeyboardMarkup([[InlineKeyboardButton("🎲 Бросить кубик", callback_data="admission_roll")]])
+def kb_cell(): return InlineKeyboardMarkup([
+    [InlineKeyboardButton("▶️ Продолжить путь", callback_data="continue")],
+    [InlineKeyboardButton("💬 Объяснить проще", callback_data="simpler"), InlineKeyboardButton("✏️ Записать мысль", callback_data="insight")],
+    [InlineKeyboardButton("❓ Не понимаю", callback_data="help")],
+])
+def kb_game_roll(): return InlineKeyboardMarkup([[InlineKeyboardButton("🎲 Бросить кубик", callback_data="game_roll")]])
+def kb_help(): return InlineKeyboardMarkup([
+    [InlineKeyboardButton("😨 Страх", callback_data="help_страх"), InlineKeyboardButton("🔀 Выбор", callback_data="help_выбор")],
+    [InlineKeyboardButton("💞 Отношения", callback_data="help_отношения"), InlineKeyboardButton("🤔 Неуверенность", callback_data="help_неуверенность")],
+    [InlineKeyboardButton("✨ Что-то другое", callback_data="help_другое")],
+])
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    sessions[user_id] = {
-        "state": "query_input",
-        "query": "",
-        "readiness": 0.5,
-        "cell": 0,
-        "path": [],
-        "insights": [],
-        "events": [],
-        "roll_count": 0,
-    }
+    uid = update.effective_user.id
+    sessions[uid] = {"state":"query_input","query":"","readiness":0.5,"cell":0,"path":[],"insights":[],"events":[]}
     await update.message.reply_text(
         "✨ Добро пожаловать в игру Лила.\n\n"
         "Это путешествие по 72 состояниям человеческого опыта. "
         "Игра не даёт ответов — она помогает прожить вопрос.\n\n"
         "━━━━━━━━━━━━━━\n\n"
-        "Перед началом путешествия сформулируйте запрос, "
-        "с которым вы хотите войти в игру.\n\n"
+        "Сформулируйте запрос, с которым хотите войти в игру.\n\n"
         "Примеры:\n"
         "— Почему я боюсь менять работу?\n"
         "— Что мешает мне строить отношения?\n"
@@ -341,245 +212,134 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Напишите свой запрос:"
     )
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    session = get_session(user_id)
+    uid = update.effective_user.id
+    s = get_session(uid)
     text = update.message.text.strip()
 
-    if session["state"] == "query_input":
+    if s["state"] == "query_input":
         await update.message.reply_text("⏳ Принимаю ваш запрос...")
-
-        # Скрытый анализ
-        readiness = await analyze_query(text)
-        session["query"] = text
-        session["readiness"] = readiness
-
-        # Отражение
+        s["readiness"] = await analyze_query(text)
+        s["query"] = text
         reflection = await reflect_query(text)
         await update.message.reply_text(reflection)
-
         await asyncio.sleep(1)
         await update.message.reply_text(
-            "Пространство готово встретить ваш запрос.\n\n"
-            "Бросьте кубик — и узнайте, готово ли оно принять именно его.",
-            reply_markup=kb_roll_admission()
+            "Пространство готово встретить ваш запрос.\n\nБросьте кубик:",
+            reply_markup=kb_admission()
         )
-        session["state"] = "admission_roll"
+        s["state"] = "admission_roll"
 
-    elif session["state"] == "insight_input":
-        session["insights"].append(text)
-        session["events"].append(f"💡 Мысль на клетке {session['cell']}: {text}")
-        await update.message.reply_text(
-            "✏️ Мысль записана. Она останется в вашей истории пути.\n\n"
-            "Продолжайте:",
-            reply_markup=kb_cell()
-        )
-        session["state"] = "cell_view"
+    elif s["state"] == "insight_input":
+        s["insights"].append(text)
+        await update.message.reply_text("✏️ Мысль записана.\n\nПродолжайте:", reply_markup=kb_cell())
+        s["state"] = "cell_view"
 
     else:
-        await update.message.reply_text(
-            "Нажмите кнопку ниже, чтобы продолжить игру.",
-        )
-
+        await update.message.reply_text("Нажмите кнопку ниже, чтобы продолжить.")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    session = get_session(user_id)
-    data = query.data
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+    s = get_session(uid)
+    data = q.data
 
-    # ── БРОСОК ДОПУСКА ──
     if data == "admission_roll":
-        roll = weighted_roll(session["readiness"])
-        session["roll_count"] += 1
-
+        roll = weighted_roll(s["readiness"])
         if roll == 6:
-            await query.message.reply_text(
-                f"🎲 Выпало: 6\n\n"
-                f"Запрос услышан.\nВаш путь начинается.\n\n"
-                f"━━━━━━━━━━━━━━"
-            )
+            await q.message.reply_text("🎲 Выпало: 6\n\nЗапрос услышан.\nВаш путь начинается.\n\n━━━━━━━━━━━━━━")
             await asyncio.sleep(1)
-            await enter_cell(query.message, session, 6)
+            await enter_cell(q.message, s, 6)
         else:
-            comment = ADMISSION_COMMENTS[roll]
-            await query.message.reply_text(
-                f"🎲 Выпало: {roll}\n\n{comment}\n\n"
-                f"Попробуйте переформулировать запрос — и снова бросьте кубик.\n\n"
-                f"Напишите новый вариант:"
-            )
-            session["state"] = "query_input"
+            await q.message.reply_text(f"🎲 Выпало: {roll}\n\n{ADMISSION_COMMENTS[roll]}\n\nНапишите новый вариант запроса:")
+            s["state"] = "query_input"
 
-    # ── ПРОДОЛЖИТЬ (БРОСОК В ИГРЕ) ──
     elif data == "continue":
-        await query.message.reply_text(
-            "🎲 Бросьте кубик, чтобы сделать следующий ход:",
-            reply_markup=kb_roll_game()
-        )
-        session["state"] = "game_roll"
+        await q.message.reply_text("🎲 Бросьте кубик:", reply_markup=kb_game_roll())
+        s["state"] = "game_roll"
 
-    # ── БРОСОК В ИГРЕ ──
     elif data == "game_roll":
-        roll = game_roll()
-        current = session["cell"]
-        new_cell = current + roll
-
-        if new_cell > 72:
-            new_cell = 72  # не выходим за поле
-
-        await query.message.reply_text(
-            f"🎲 Выпало: {roll}\n"
-            f"Клетка {current} → {new_cell}"
-        )
+        roll = random.randint(1, 6)
+        new_cell = min(s["cell"] + roll, 72)
+        await q.message.reply_text(f"🎲 Выпало: {roll}\nКлетка {s['cell']} → {new_cell}")
         await asyncio.sleep(1)
-        await enter_cell(query.message, session, new_cell)
+        await enter_cell(q.message, s, new_cell)
 
-    # ── ОБЪЯСНИТЬ ПРОЩЕ ──
     elif data == "simpler":
-        await query.message.reply_text("⏳ Ищу более простые слова...")
-        text = await explain_simpler(session["cell"], session["query"])
-        await query.message.reply_text(
-            f"💬 {text}\n\n━━━━━━━━━━━━━━",
-            reply_markup=kb_cell()
-        )
+        await q.message.reply_text("⏳ Ищу простые слова...")
+        t = await explain_simpler(s["cell"], s["query"])
+        await q.message.reply_text(f"💬 {t}\n\n━━━━━━━━━━━━━━", reply_markup=kb_cell())
 
-    # ── ЗАПИСАТЬ МЫСЛЬ ──
     elif data == "insight":
-        await query.message.reply_text(
-            "✏️ Напишите вашу мысль или инсайт — я сохраню его в истории пути:"
-        )
-        session["state"] = "insight_input"
+        await q.message.reply_text("✏️ Напишите вашу мысль:")
+        s["state"] = "insight_input"
 
-    # ── НЕ ПОНИМАЮ ──
     elif data == "help":
-        await query.message.reply_text(
-            "Давайте попробуем иначе.\n\nЧто сейчас ближе к вашему состоянию?",
-            reply_markup=kb_help_themes()
-        )
+        await q.message.reply_text("Что сейчас ближе к вашему состоянию?", reply_markup=kb_help())
 
-    # ── ПОМОЩЬ ПО ТЕМЕ ──
     elif data.startswith("help_"):
         theme = data.replace("help_", "")
-        await query.message.reply_text("⏳ Подбираю объяснение...")
-        text = await generate_help_response(session["cell"], session["query"], theme)
-        await query.message.reply_text(
-            f"{text}\n\n━━━━━━━━━━━━━━",
-            reply_markup=kb_cell()
-        )
-        session["state"] = "cell_view"
+        await q.message.reply_text("⏳ Подбираю объяснение...")
+        t = await generate_help_response(s["cell"], s["query"], theme)
+        await q.message.reply_text(f"{t}\n\n━━━━━━━━━━━━━━", reply_markup=kb_cell())
+        s["state"] = "cell_view"
 
+async def enter_cell(message, s: dict, cell_number: int):
+    cell = CELLS.get(cell_number, {"name":"?","desc":""})
+    prefix = ""
 
-# ══════════════════════════════════════════════
-#  ВХОД НА КЛЕТКУ
-# ══════════════════════════════════════════════
-
-async def enter_cell(message, session: dict, cell_number: int):
-    cell = CELLS.get(cell_number, {"name": "Неизвестная клетка", "desc": ""})
-    event_prefix = ""
-
-    # Проверка змей
     if cell_number in SNAKES:
-        snake_to = SNAKES[cell_number]
-        event_prefix = (
-            f"🐍 Здесь живёт змея.\n\n"
-            f"Игра возвращает вас к чему-то важному.\n"
-            f"Иногда то, что казалось пройденным, просит ещё одного взгляда.\n\n"
-            f"Вы переходите с {cell_number} на {snake_to}.\n\n━━━━━━━━━━━━━━\n\n"
-        )
-        session["events"].append(f"🐍 Змея: {cell_number} → {snake_to}")
-        cell_number = snake_to
-        cell = CELLS.get(cell_number, {"name": "?", "desc": ""})
-
-    # Проверка стрел
+        to = SNAKES[cell_number]
+        prefix = f"🐍 Здесь живёт змея.\n\nИгра возвращает вас к чему-то важному.\n\nВы переходите с {cell_number} на {to}.\n\n━━━━━━━━━━━━━━\n\n"
+        s["events"].append(f"🐍 Змея: {cell_number}→{to}")
+        cell_number = to
+        cell = CELLS.get(cell_number, {"name":"?","desc":""})
     elif cell_number in ARROWS:
-        arrow_to = ARROWS[cell_number]
-        event_prefix = (
-            f"✨ Стрела!\n\n"
-            f"Вы увидели что-то важное — и движетесь вперёд.\n\n"
-            f"Вы переходите с {cell_number} на {arrow_to}.\n\n━━━━━━━━━━━━━━\n\n"
-        )
-        session["events"].append(f"✨ Стрела: {cell_number} → {arrow_to}")
-        cell_number = arrow_to
-        cell = CELLS.get(cell_number, {"name": "?", "desc": ""})
+        to = ARROWS[cell_number]
+        prefix = f"✨ Стрела! Вы увидели что-то важное — и движетесь вперёд.\n\nВы переходите с {cell_number} на {to}.\n\n━━━━━━━━━━━━━━\n\n"
+        s["events"].append(f"✨ Стрела: {cell_number}→{to}")
+        cell_number = to
+        cell = CELLS.get(cell_number, {"name":"?","desc":""})
 
-    session["cell"] = cell_number
-    session["path"].append(cell_number)
+    s["cell"] = cell_number
+    s["path"].append(cell_number)
 
-    # Финал
     if cell_number == 68:
-        await finish_game(message, session)
+        await finish_game(message, s)
         return
 
-    # Генерация текста клетки
     await message.reply_text("⏳ Проводник думает...")
-    cell_text = await generate_cell_text(cell_number, session["query"])
-
+    text = await generate_cell_text(cell_number, s["query"])
     header = f"{'━'*14}\n🎯 Клетка {cell_number} — «{cell['name']}»\n{'━'*14}\n\n"
+    await message.reply_text(prefix + header + text, reply_markup=kb_cell())
+    s["state"] = "cell_view"
 
+async def finish_game(message, s: dict):
+    await message.reply_text("⏳ Подготавливаю итог...")
+    summary = await generate_final_summary(s["query"], s["path"], s["insights"])
+    path_str = " → ".join(str(c) for c in s["path"])
     await message.reply_text(
-        event_prefix + header + cell_text,
-        reply_markup=kb_cell()
+        f"🏁 Вы завершили путь.\n\n{'━'*14}\n"
+        f"Ваш запрос:\n«{s['query']}»\n\n"
+        f"Ваш путь:\n{path_str}\n{'━'*14}\n\n"
+        f"{summary}\n\n{'━'*14}\n\n"
+        f"Что стало понятнее?\nЧто изменилось?\nКакой шаг вы сделаете дальше?\n\n{'━'*14}\n\n"
+        f"Ответ был не найден.\nОн был прожит."
     )
-    session["state"] = "cell_view"
-
-
-# ══════════════════════════════════════════════
-#  ФИНАЛ
-# ══════════════════════════════════════════════
-
-async def finish_game(message, session: dict):
-    await message.reply_text("⏳ Подготавливаю итог вашего пути...")
-
-    summary = await generate_final_summary(
-        session["query"],
-        session["path"],
-        session["insights"]
-    )
-
-    path_str = " → ".join(str(c) for c in session["path"])
-
-    await message.reply_text(
-        f"🏁 Вы завершили путь.\n\n"
-        f"{'━'*14}\n"
-        f"Ваш запрос в начале:\n«{session['query']}»\n\n"
-        f"Ваш путь:\n{path_str}\n"
-        f"{'━'*14}\n\n"
-        f"{summary}\n\n"
-        f"{'━'*14}\n\n"
-        f"Что стало понятнее?\n"
-        f"Что изменилось?\n"
-        f"Какой шаг вы сделаете дальше?\n\n"
-        f"{'━'*14}\n\n"
-        f"_Ответ был не найден._\n"
-        f"_Он был прожит._"
-    )
-
-    # Сбросить сессию
-    session["state"] = "idle"
-    await message.reply_text(
-        "Чтобы начать новую игру, напишите /start"
-    )
-
-
-# ══════════════════════════════════════════════
-#  ЗАПУСК
-# ══════════════════════════════════════════════
+    s["state"] = "idle"
+    await message.reply_text("Чтобы начать новую игру — напишите /start")
 
 def main():
     if not BOT_TOKEN:
-        print("❌ Ошибка: переменная BOT_TOKEN не задана!")
+        print("ОШИБКА: BOT_TOKEN не задан!")
         return
-
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    print("✅ Бот Лила запущен!")
+    print("Бот Лила запущен!")
     app.run_polling(drop_pending_updates=True)
-
 
 if __name__ == "__main__":
     main()
