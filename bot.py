@@ -330,7 +330,7 @@ async def finish_game(message, s: dict):
     s["state"] = "idle"
     await message.reply_text("Чтобы начать новую игру — напишите /start")
 
-    async def main():
+def main():
     if not BOT_TOKEN:
         print("ОШИБКА: BOT_TOKEN не задан!")
         return
@@ -339,8 +339,7 @@ async def finish_game(message, s: dict):
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Бот Лила запущен!")
-    await app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
