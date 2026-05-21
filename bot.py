@@ -341,4 +341,15 @@ def main():
     print("Бот Лила запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 if __name__ == "__main__":
-    main()
+    def main():
+    if not BOT_TOKEN:
+        print("ОШИБКА: BOT_TOKEN не задан!")
+        return
+    import asyncio
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("Бот Лила запущен!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
