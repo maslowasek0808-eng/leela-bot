@@ -347,6 +347,29 @@ def handle_callback(call):
         bot.send_message(uid, f"{t}\n\n━━━━━━━━━━━━━━", reply_markup=kb_cell())
         s["state"] = "cell_view"
 
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
+
 if __name__ == "__main__":
     print("Бот Лила запущен!")
-    bot.infinity_polling()
+    # Сначала запускаем HTTP-сервер в главном потоке на секунду
+    port = int(os.environ.get("PORT", 8080))
+    health_server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    # Запускаем polling в отдельном потоке
+    t = threading.Thread(target=bot.infinity_polling, daemon=True)
+    t.start()
+    print(f"HTTP health server on port {port}")
+    health_server.serve_forever()
